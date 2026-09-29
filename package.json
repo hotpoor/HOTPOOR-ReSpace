@@ -1,0 +1,21 @@
+{
+  "name": "hotpoor-respace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first spatial reconstruction review and Gaussian splat viewers",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-supersplat.mjs",
+    "check": "node --check web/viewer.js",
+    "start": "python server.py",
+    "test": "python -m unittest discover -s tests"
+  },
+  "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "0.4.7",
+    "three": "0.170.0",
+    "@playcanvas/supersplat-viewer": "1.36.0"
+  }
+}

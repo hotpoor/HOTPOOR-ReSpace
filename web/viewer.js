@@ -1,0 +1,35 @@
+import * as Splats from 'splats';
+import * as THREE from 'three';
+const el=id=>document.getElementById(id);
+const requested=new URLSearchParams(location.search).get('model')||'sample';
+async function refresh(){const r=await fetch('/models.json');if(!r.ok)throw Error('无法读取模型列表');const models=await r.json();const chosen=el('model').value||requested;el('model').replaceChildren(...models.map(m=>new Option(m.name,m.id)));el('model').value=models.some(m=>m.id===chosen)?chosen:'sample';el('pending').textContent=models.some(m=>m.id==='full')?'完整视频版已就绪，可在上方切换。':'完整视频版正在处理，完成后会加入菜单。';return models;}
+el('model').onchange=()=>{location.search=new URLSearchParams({model:el('model').value});};
+try{
+ const models=await refresh();if(!models.length)throw Error('尚未配置模型，请按 README 设置 RESPACE_DATA_DIR。');const m=models.find(m=>m.id===requested)||models[0];
+ const alt=document.createElement('a');alt.href='/supersplat/'+m.id+'.html?lang=zh-CN';alt.textContent='切换到 SuperSplat';el('download').parentElement.append(alt);
+ el('summary').textContent=m.summary;el('scope').textContent=m.scope;el('download').href=m.ply;el('download').download='spirula-'+m.id+'.ply';
+ const r=await fetch(m.views);if(!r.ok)throw Error('拍摄位置数据未找到');const views=await r.json();const first=views[0];
+ views.forEach((v,i)=>el('view').add(new Option(v.name,i)));
+ const viewer=new Splats.Viewer({rootElement:el('scene'),cameraUp:first.up,initialCameraPosition:first.position,initialCameraLookAt:first.target,sharedMemoryForWorkers:false,gpuAcceleratedSort:false,sphericalHarmonicsDegree:1,integerBasedSort:false,sceneRevealMode:Splats.SceneRevealMode.Instant});
+ await viewer.addSplatScene(m.ply,{splatAlphaRemovalThreshold:5,showLoadingUI:true,onProgress:p=>el('status').textContent=`正在加载 ${Math.round(p)}%`});
+ viewer.camera.fov=85;viewer.camera.near=.01;viewer.camera.far=1000;viewer.camera.updateProjectionMatrix();viewer.start();
+ const jump=()=>{const v=views[Number(el('view').value)];viewer.camera.position.fromArray(v.position);viewer.camera.up.fromArray(v.up);viewer.controls.target.fromArray(v.target);viewer.camera.lookAt(viewer.controls.target);viewer.controls.update();viewer.forceRenderNextFrame();};
+ el('view').onchange=jump;el('reset').onclick=jump;const move=d=>{el('view').value=(+el('view').value+d+views.length)%views.length;jump();};el('prev').onclick=()=>move(-1);el('next').onclick=()=>move(1);['view','prev','next','reset'].forEach(id=>el(id).disabled=false);jump();el('status').textContent='已加载 · 可以拖动查看';window.previewReady=true;setInterval(()=>refresh().catch(()=>{}),30000);
+ const nav=document.createElement('div');nav.className='row';nav.style.marginTop='12px';nav.innerHTML='<button id="fly">进入漫游 · WASD</button><label>移动速度 <input id="speed" type="range" min="0.2" max="8" step="0.2" value="2" style="width:100px;vertical-align:middle"></label>';el('reset').parentElement.after(nav);
+ document.querySelector('.hint').innerHTML='WASD 前后左右 · Q/E 升降 · Shift 加速<br>按住中键原地转头 / 抬头低头 · Esc 退出漫游';
+ const scene=el('scene'), keys=new Set(), forward=new THREE.Vector3(),right=new THREE.Vector3(),up=new THREE.Vector3(),delta=new THREE.Vector3();
+ const centers=views.map(v=>new THREE.Vector3().fromArray(v.position));const box=new THREE.Box3().setFromPoints(centers);const extent=Math.max(box.getSize(new THREE.Vector3()).length(),.1);const baseSpeed=extent*.08;
+ const codes=['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ShiftLeft','ShiftRight'];
+ const editable=e=>e.target.closest?.('input,select,textarea,[contenteditable="true"]');
+ window.addEventListener('keydown',e=>{if(editable(e)||!codes.includes(e.code))return;e.preventDefault();e.stopImmediatePropagation();keys.add(e.code);},true);
+ window.addEventListener('keyup',e=>{keys.delete(e.code);},true);window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>{if(document.hidden)keys.clear();});
+ let flyMode=false, wasLocked=false, dragging=false;
+ const mode=active=>{flyMode=active;viewer.controls.enabled=!active;keys.clear();dragging=false;el('fly').textContent=active?'退出漫游 · Esc':'进入漫游 · WASD';el('status').textContent=active?(document.pointerLockElement===scene?'鼠标转向 · WASD 移动 · Shift 加速':'按住中键或左键转向 · WASD 移动 · Shift 加速'):'已加载 · WASD 移动 / 拖动查看';scene.style.cursor=active?'crosshair':'';};
+ el('fly').onclick=async()=>{if(flyMode){mode(false);if(document.pointerLockElement===scene)document.exitPointerLock();return;}mode(true);try{await scene.requestPointerLock();}catch(e){mode(true);}};
+ document.addEventListener('pointerlockchange',()=>{const active=document.pointerLockElement===scene;if(active)mode(true);else if(wasLocked)mode(false);wasLocked=active;});
+ document.addEventListener('pointerlockerror',()=>{if(flyMode)mode(true);});
+ window.addEventListener('keydown',e=>{if(e.code==='Escape'&&flyMode){mode(false);if(document.pointerLockElement===scene)document.exitPointerLock();}},true);
+ scene.addEventListener('pointerdown',e=>{if(e.button===1||(flyMode&&e.button===0)){if(!flyMode)mode(true);dragging=true;scene.setPointerCapture(e.pointerId);e.preventDefault();e.stopImmediatePropagation();}},true);window.addEventListener('pointerup',()=>dragging=false);window.addEventListener('pointercancel',()=>dragging=false);scene.addEventListener('lostpointercapture',()=>dragging=false);window.addEventListener('blur',()=>dragging=false);scene.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});
+ document.addEventListener('pointermove',e=>{if(!flyMode||(document.pointerLockElement!==scene&&!dragging))return;up.copy(viewer.camera.up).normalize();viewer.camera.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(up,-e.movementX*.002));viewer.camera.getWorldDirection(forward);right.crossVectors(forward,up).normalize();const pitch=-e.movementY*.002;const candidate=forward.clone().applyAxisAngle(right,pitch);if(Math.abs(candidate.dot(up))<.985)viewer.camera.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(right,pitch));viewer.camera.getWorldDirection(forward);viewer.controls.target.copy(viewer.camera.position).add(forward);viewer.forceRenderNextFrame();});
+ let last=performance.now();function flyTick(now){const dt=Math.min((now-last)/1000,.05);last=now;if(keys.size){up.copy(viewer.camera.up).normalize();viewer.camera.getWorldDirection(forward);forward.addScaledVector(up,-forward.dot(up)).normalize();right.crossVectors(forward,up).normalize();delta.set(0,0,0);if(keys.has('KeyW'))delta.add(forward);if(keys.has('KeyS'))delta.sub(forward);if(keys.has('KeyD'))delta.add(right);if(keys.has('KeyA'))delta.sub(right);if(keys.has('KeyE'))delta.add(up);if(keys.has('KeyQ'))delta.sub(up);if(delta.lengthSq()){delta.normalize().multiplyScalar(baseSpeed*Number(el('speed').value)*dt*(keys.has('ShiftLeft')||keys.has('ShiftRight')?4:1));viewer.camera.position.add(delta);viewer.controls.target.add(delta);viewer.forceRenderNextFrame();}}requestAnimationFrame(flyTick);}requestAnimationFrame(flyTick);
+}catch(e){el('status').textContent='加载未完成';el('error').textContent=e.message;console.error(e);}
